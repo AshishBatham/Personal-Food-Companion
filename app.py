@@ -1,9 +1,8 @@
 import streamlit as st
 from PIL import Image
 import numpy as np
-from keras.applications import MobileNetV2
-from keras.applications.mobilenet_v2 import preprocess_input, decode_predictions
-from keras.utils import img_to_array
+import tensorflow as tf
+import tensorflow_hub as hub
 import pandas as pd
 import requests
 
@@ -32,13 +31,18 @@ st.markdown("<h1 style='text-align: center;'>🍎 Food Scanner App</h1>", unsafe
 st.markdown("---")
 
 # -------------------------------
-# Load Model
+# Load Food-101 Model (Best Accuracy)
 # -------------------------------
 @st.cache_resource
 def load_model():
-    return MobileNetV2(weights="imagenet")
+    model = hub.load("https://tfhub.dev/google/food_classifier_mobilenet_v2_1.0_224/1")
+    return model
 
 model = load_model()
+
+# Load Food-101 labels
+LABELS_URL = "https://raw.githubusercontent.com/tensorflow/models/master/research/slim/datasets/food101_labels.txt"
+labels = requests.get(LABELS_URL).text.strip().split("\n")
 
 # -------------------------------
 # USDA API Key & Function
@@ -70,26 +74,28 @@ else:
 # Process Image if Provided
 # -------------------------------
 if uploaded_file is not None:
-    img = Image.open(uploaded_file)
+    img = Image.open(uploaded_file).convert("RGB")
     st.image(img, caption="Selected Image", use_column_width=True)
     st.write("🔍 Analyzing image...")
 
-    # Preprocess for MobileNetV2
+    # Preprocess for Food-101 model
     img_resized = img.resize((224, 224))
-    x = img_to_array(img_resized)
-    x = np.expand_dims(x, axis=0)
-    x = preprocess_input(x)
+    img_array = np.array(img_resized) / 255.0
+    img_array = np.expand_dims(img_array, axis=0)
 
-    # Predictions
-    preds = model.predict(x)
-    decoded = decode_predictions(preds, top=3)[0]
+    # Predict
+    preds = model(img_array)
+    top_indices = tf.argsort(preds, direction='DESCENDING')[0][:3].numpy()
+    confidences = tf.nn.softmax(preds[0]).numpy()
 
     st.markdown("## 🔍 Top Predictions")
-    for i, pred in enumerate(decoded, start=1):
-        st.write(f"{i}. {pred[1].replace('_', ' ').title()} ({pred[2]*100:.2f}%)")
+    for i, idx in enumerate(top_indices):
+        label = labels[idx].replace("_", " ").title()
+        confidence = confidences[idx] * 100
+        st.write(f"{i+1}. {label} ({confidence:.2f}%)")
 
     # Nutrition Info
-    top_guess = decoded[0][1].replace('_', ' ')
+    top_guess = labels[top_indices[0]].replace("_", " ")
     st.markdown("## 🥗 Nutrition Info")
     food_info = search_usda(top_guess)
 
