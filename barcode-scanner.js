@@ -5,7 +5,7 @@ const firebaseConfig = {
     projectId: "REPLACE_PROJECT_ID",
     // ...other keys
 };
-// Initialize firebase
+// Initialize firebase (compat)
 if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
@@ -25,8 +25,16 @@ const btnSignUp = document.getElementById('btnSignUp');
 const btnSignIn = document.getElementById('btnSignIn');
 const btnSignOut = document.getElementById('btnSignOut');
 
-btnSignUp.addEventListener('click', () => { const email = prompt('Email'); const pass = prompt('Password'); if (!email || !pass) return; auth.createUserWithEmailAndPassword(email, pass).then(() => alert('Signed up')).catch(e => alert(e.message)); });
-btnSignIn.addEventListener('click', () => { const email = prompt('Email'); const pass = prompt('Password'); if (!email || !pass) return; auth.signInWithEmailAndPassword(email, pass).then(() => alert('Signed in')).catch(e => alert(e.message)); });
+btnSignUp.addEventListener('click', () => {
+    const email = prompt('Email'); const pass = prompt('Password');
+    if (!email || !pass) return;
+    auth.createUserWithEmailAndPassword(email, pass).then(() => alert('Signed up')).catch(e => alert(e.message));
+});
+btnSignIn.addEventListener('click', () => {
+    const email = prompt('Email'); const pass = prompt('Password');
+    if (!email || !pass) return;
+    auth.signInWithEmailAndPassword(email, pass).then(() => alert('Signed in')).catch(e => alert(e.message));
+});
 btnSignOut.addEventListener('click', () => auth.signOut());
 
 auth.onAuthStateChanged(user => {
@@ -74,53 +82,204 @@ auth.onAuthStateChanged(async user => {
 
 function populateProfileForm(profile) { if (!profile) return; for (let k in profile) { const el = document.getElementById(k); if (el) el.value = profile[k]; } document.getElementById('allergies').value = (profile.allergies || []).join(', '); }
 
+// ---------- Profile collapse toggle ----------
+const toggleProfileBtn = document.getElementById('toggleProfile');
+const profileBody = document.getElementById('profileBody');
+toggleProfileBtn.addEventListener('click', () => {
+    if (profileBody.classList.contains('collapsed')) {
+        profileBody.classList.remove('collapsed');
+        toggleProfileBtn.textContent = 'Collapse';
+    } else {
+        profileBody.classList.add('collapsed');
+        toggleProfileBtn.textContent = 'Expand';
+    }
+});
+
 // ---------- Scanning: ZXing (camera) ----------
-let codeReader, activeStream;
-document.getElementById('startCamBtn').addEventListener('click', async () => {
-    if (!codeReader) codeReader = new ZXing.BrowserMultiFormatReader();
+// ---------- Camera Scanner (ZXing) ----------
+let codeReader = null;
+
+document.getElementById("startCamBtn").addEventListener("click", async () => {
     try {
+        if (!codeReader) codeReader = new ZXing.BrowserMultiFormatReader();
+
+        const videoElem = document.getElementById("video");
+        videoElem.style.display = "block"; // Show video UI
+
         const devices = await codeReader.listVideoInputDevices();
-        const deviceId = devices[0] && devices[0].deviceId;
-        await codeReader.decodeFromVideoDevice(deviceId, 'video', (result, err) => {
-            if (result) { handleBarcode(result.text); stopCameraStream(); }
+        if (!devices.length) {
+            alert("No camera found.");
+            return;
+        }
+
+        const deviceId = devices[0].deviceId;
+
+        codeReader.decodeFromVideoDevice(deviceId, "video", (result, err) => {
+            if (result) {
+                console.log("Barcode detected:", result.text);
+                stopCameraStream();
+                handleBarcode(result.text);
+            }
         });
-    } catch (e) { console.error(e); alert('Camera failed: ' + e.message); }
-});
-document.getElementById('stopCamBtn').addEventListener('click', () => stopCameraStream());
-function stopCameraStream() { try { codeReader.reset(); } catch (e) { } }
-
-// ---------- Image upload using Quagga ----------
-const imageUpload = document.getElementById('imageUpload');
-const previewImage = document.getElementById('previewImage');
-imageUpload.addEventListener('change', () => { const f = imageUpload.files[0]; if (!f) return; previewImage.src = URL.createObjectURL(f); previewImage.style.display = 'block'; });
-
-document.getElementById('uploadScanBtn').addEventListener('click', () => {
-    const file = imageUpload.files[0]; if (!file) return alert('Upload image first');
-    const url = URL.createObjectURL(file);
-    tryQuagga(url).then(code => { if (code) handleBarcode(code); else alert('No barcode detected. Try rotate or camera.'); });
+    } catch (error) {
+        console.error("Camera error:", error);
+        alert("Camera could not start: " + error.message);
+    }
 });
 
-async function tryRotateImage(url) { // helper to try rotations
-    const angles = [0, 90, 180, 270];
-    for (const a of angles) { const code = await tryQuagga(url, a); if (code) return code; }
-    return null;
+document.getElementById("stopCamBtn").addEventListener("click", () => stopCameraStream());
+
+function stopCameraStream() {
+    const videoElem = document.getElementById("video");
+
+    try {
+        if (codeReader) {
+            codeReader.reset(); // stop ZXing
+        }
+
+        if (videoElem.srcObject) {
+            const tracks = videoElem.srcObject.getTracks();
+            tracks.forEach(t => t.stop());
+        }
+
+        videoElem.srcObject = null;
+        videoElem.style.display = "none";
+    } catch (e) {
+        console.error("Error stopping camera:", e);
+    }
 }
 
-function tryQuagga(src, rotate) {
-    return new Promise((resolve) => {
+
+
+
+// ---------- Image upload using Quagga
+const imageUpload = document.getElementById('imageUpload');
+const previewImage = document.getElementById('previewImage');
+const uploadScanBtn = document.getElementById('uploadScanBtn');
+const tryRotateBtn = document.getElementById('tryRotateBtn');
+
+// 1) Clicking upload button opens the hidden file input
+uploadScanBtn.addEventListener('click', () => {
+    imageUpload.click();
+});
+
+// 2) When user selects a file: preview + auto-scan
+imageUpload.addEventListener('change', async () => {
+    const f = imageUpload.files[0];
+    if (!f) return;
+
+    // show preview
+    previewImage.src = URL.createObjectURL(f);
+    previewImage.style.display = 'block';
+
+    // small UI feedback (optional)
+    resultBox.innerHTML = '<small>Detecting barcode in uploaded image…</small>';
+
+    const url = URL.createObjectURL(f);
+
+    try {
+        // Try decode without rotation first
+        const code = await tryQuagga(url, 0);
+        if (code) {
+            handleBarcode(code);
+            return;
+        }
+        // if not found, attempt rotational tries automatically
+        const rotatedCode = await tryRotateImage(url);
+        if (rotatedCode) {
+            handleBarcode(rotatedCode);
+            return;
+        }
+
+        // nothing found
+        resultBox.innerHTML = '<p>❌ Could not detect a barcode in the uploaded image. Try clearer image or camera.</p>';
+    } catch (err) {
+        console.error(err);
+        resultBox.innerHTML = '<p>❌ Error scanning uploaded image.</p>';
+    }
+});
+
+// 3) tryQuagga: accepts rotation degrees; rotates image if needed, then decodes
+function tryQuagga(src, rotateDeg = 0) {
+    return new Promise(async (resolve) => {
+        let srcToUse = src;
+        if (rotateDeg && rotateDeg % 360 !== 0) {
+            try {
+                srcToUse = await rotateImageDataUrl(src, rotateDeg);
+            } catch (e) {
+                console.error('rotateImageDataUrl failed', e);
+                resolve(null);
+                return;
+            }
+        }
+
         Quagga.decodeSingle({
-            src, numOfWorkers: 0, inputStream: { size: 800 },
+            src: srcToUse,
+            numOfWorkers: 0,
+            inputStream: { size: 800 },
             decoder: { readers: ["ean_reader", "upc_reader", "code_128_reader", "code_39_reader"] }
-        }, function (result) { if (result && result.codeResult) { resolve(result.codeResult.code); } else resolve(null); });
+        }, function (result) {
+            if (result && result.codeResult) resolve(result.codeResult.code);
+            else resolve(null);
+        });
     });
 }
 
-document.getElementById('tryRotateBtn').addEventListener('click', async () => {
-    const file = imageUpload.files[0]; if (!file) return alert('Upload first');
-    const url = URL.createObjectURL(file);
+// 4) Try rotations helper: tries 90, 180, 270
+async function tryRotateImage(url) {
+    const angles = [90, 180, 270];
+    for (const a of angles) {
+        const code = await tryQuagga(url, a);
+        if (code) return code;
+    }
+    return null;
+}
+
+// 5) rotateImageDataUrl: rotate an image (data URL or blob URL) and return new dataURL
+function rotateImageDataUrl(imageUrl, degrees) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        // Important for cross-origin images (if any)
+        img.crossOrigin = 'Anonymous';
+        img.onload = function () {
+            const w = img.width, h = img.height;
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            if (degrees % 180 !== 0) {
+                canvas.width = h;
+                canvas.height = w;
+            } else {
+                canvas.width = w;
+                canvas.height = h;
+            }
+
+            // move origin to center for rotation
+            ctx.translate(canvas.width / 2, canvas.height / 2);
+            ctx.rotate(degrees * Math.PI / 180);
+            ctx.drawImage(img, -w / 2, -h / 2);
+
+            // convert to data URL
+            const dataUrl = canvas.toDataURL('image/jpeg');
+            resolve(dataUrl);
+        };
+        img.onerror = (e) => reject(e);
+        img.src = imageUrl;
+    });
+}
+
+// 6) "Try rotated" button: run explicit rotate attempts on currently selected file
+tryRotateBtn.addEventListener('click', async () => {
+    const f = imageUpload.files ? imageUpload.files[0] : null;
+    if (!f) return alert('Please upload an image first.');
+
+    resultBox.innerHTML = '<small>Trying rotated variants…</small>';
+    const url = URL.createObjectURL(f);
     const code = await tryRotateImage(url);
-    if (code) handleBarcode(code); else alert('No barcode after rotations');
+    if (code) handleBarcode(code);
+    else resultBox.innerHTML = '<p>❌ No barcode after rotations.</p>';
 });
+
 
 // ---------- Fetch product from OpenFoodFacts ----------
 async function handleBarcode(barcode) {
