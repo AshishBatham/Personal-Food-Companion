@@ -291,7 +291,7 @@ async function handleBarcode(barcode) {
     try {
         const resp = await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
         const data = await resp.json();
-        if (!data || data.status !== 1) { resultBox.innerHTML = '<p>❌ Product not found in OpenFoodFacts.</p>'; clearResult(); return; }
+        if (!data || data.status !== 1) { resultBox.innerHTML = '<p>❌ Product not found.</p>'; clearResult(); return; }
         const p = data.product;
         const product = normalizeOpenFoodProduct(p);
         showProduct(product);
