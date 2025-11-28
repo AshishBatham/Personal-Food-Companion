@@ -1,0 +1,255 @@
+// ---------- FIREBASE CONFIG - REPLACE WITH YOUR KEYS -----------
+const firebaseConfig = {
+    apiKey: "REPLACE_API_KEY",
+    authDomain: "REPLACE_AUTH_DOMAIN",
+    projectId: "REPLACE_PROJECT_ID",
+    // ...other keys
+};
+// Initialize firebase
+if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+// ---------- Helper: UI refs ----------
+const saveMsg = document.getElementById('saveMsg');
+const resultBox = document.getElementById('productInfo');
+const nutriList = document.getElementById('nutriList');
+const reasonList = document.getElementById('reasonList');
+const ingredientExplainer = document.getElementById('ingredientExplainer');
+const adviceBox = document.getElementById('advice');
+const statusBadge = document.getElementById('statusBadge');
+const historyEl = document.getElementById('history');
+
+// ---------- Authentication UI ----------
+const btnSignUp = document.getElementById('btnSignUp');
+const btnSignIn = document.getElementById('btnSignIn');
+const btnSignOut = document.getElementById('btnSignOut');
+
+btnSignUp.addEventListener('click', () => { const email = prompt('Email'); const pass = prompt('Password'); if (!email || !pass) return; auth.createUserWithEmailAndPassword(email, pass).then(() => alert('Signed up')).catch(e => alert(e.message)); });
+btnSignIn.addEventListener('click', () => { const email = prompt('Email'); const pass = prompt('Password'); if (!email || !pass) return; auth.signInWithEmailAndPassword(email, pass).then(() => alert('Signed in')).catch(e => alert(e.message)); });
+btnSignOut.addEventListener('click', () => auth.signOut());
+
+auth.onAuthStateChanged(user => {
+    if (user) { btnSignIn.style.display = 'none'; btnSignUp.style.display = 'none'; btnSignOut.style.display = 'inline-block'; }
+    else { btnSignIn.style.display = 'inline-block'; btnSignUp.style.display = 'inline-block'; btnSignOut.style.display = 'none'; }
+});
+
+// ---------- Save profile ----------
+document.getElementById('userProfileForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const profile = collectProfileFromForm();
+    localStorage.setItem('nutriUser', JSON.stringify(profile));
+    saveMsg.style.display = 'block'; setTimeout(() => saveMsg.style.display = 'none', 1800);
+});
+
+document.getElementById('btnSaveCloud').addEventListener('click', async () => {
+    const user = auth.currentUser;
+    if (!user) return alert('Sign in to save profile to cloud');
+    const profile = collectProfileFromForm();
+    await db.collection('users').doc(user.uid).set(profile, { merge: true });
+    alert('Saved to cloud');
+});
+
+function collectProfileFromForm() {
+    return {
+        name: document.getElementById('name').value || '',
+        age: Number(document.getElementById('age').value) || 0,
+        gender: document.getElementById('gender').value || '',
+        height: Number(document.getElementById('height').value) || 0,
+        weight: Number(document.getElementById('weight').value) || 0,
+        activity: document.getElementById('activity').value || 'sedentary',
+        diet: document.getElementById('diet').value || 'omnivore',
+        goal: document.getElementById('goal').value || 'maintenance',
+        allergies: document.getElementById('allergies').value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+    };
+}
+
+// If user logged in, load profile from cloud
+auth.onAuthStateChanged(async user => {
+    if (user) {
+        const doc = await db.collection('users').doc(user.uid).get();
+        if (doc.exists) { const data = doc.data(); populateProfileForm(data); localStorage.setItem('nutriUser', JSON.stringify(data)); }
+    }
+});
+
+function populateProfileForm(profile) { if (!profile) return; for (let k in profile) { const el = document.getElementById(k); if (el) el.value = profile[k]; } document.getElementById('allergies').value = (profile.allergies || []).join(', '); }
+
+// ---------- Scanning: ZXing (camera) ----------
+let codeReader, activeStream;
+document.getElementById('startCamBtn').addEventListener('click', async () => {
+    if (!codeReader) codeReader = new ZXing.BrowserMultiFormatReader();
+    try {
+        const devices = await codeReader.listVideoInputDevices();
+        const deviceId = devices[0] && devices[0].deviceId;
+        await codeReader.decodeFromVideoDevice(deviceId, 'video', (result, err) => {
+            if (result) { handleBarcode(result.text); stopCameraStream(); }
+        });
+    } catch (e) { console.error(e); alert('Camera failed: ' + e.message); }
+});
+document.getElementById('stopCamBtn').addEventListener('click', () => stopCameraStream());
+function stopCameraStream() { try { codeReader.reset(); } catch (e) { } }
+
+// ---------- Image upload using Quagga ----------
+const imageUpload = document.getElementById('imageUpload');
+const previewImage = document.getElementById('previewImage');
+imageUpload.addEventListener('change', () => { const f = imageUpload.files[0]; if (!f) return; previewImage.src = URL.createObjectURL(f); previewImage.style.display = 'block'; });
+
+document.getElementById('uploadScanBtn').addEventListener('click', () => {
+    const file = imageUpload.files[0]; if (!file) return alert('Upload image first');
+    const url = URL.createObjectURL(file);
+    tryQuagga(url).then(code => { if (code) handleBarcode(code); else alert('No barcode detected. Try rotate or camera.'); });
+});
+
+async function tryRotateImage(url) { // helper to try rotations
+    const angles = [0, 90, 180, 270];
+    for (const a of angles) { const code = await tryQuagga(url, a); if (code) return code; }
+    return null;
+}
+
+function tryQuagga(src, rotate) {
+    return new Promise((resolve) => {
+        Quagga.decodeSingle({
+            src, numOfWorkers: 0, inputStream: { size: 800 },
+            decoder: { readers: ["ean_reader", "upc_reader", "code_128_reader", "code_39_reader"] }
+        }, function (result) { if (result && result.codeResult) { resolve(result.codeResult.code); } else resolve(null); });
+    });
+}
+
+document.getElementById('tryRotateBtn').addEventListener('click', async () => {
+    const file = imageUpload.files[0]; if (!file) return alert('Upload first');
+    const url = URL.createObjectURL(file);
+    const code = await tryRotateImage(url);
+    if (code) handleBarcode(code); else alert('No barcode after rotations');
+});
+
+// ---------- Fetch product from OpenFoodFacts ----------
+async function handleBarcode(barcode) {
+    addHistory(barcode);
+    resultBox.innerHTML = '<small>Fetching product...</small>';
+    try {
+        const resp = await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
+        const data = await resp.json();
+        if (!data || data.status !== 1) { resultBox.innerHTML = '<p>❌ Product not found in OpenFoodFacts.</p>'; clearResult(); return; }
+        const p = data.product;
+        const product = normalizeOpenFoodProduct(p);
+        showProduct(product);
+    } catch (e) { console.error(e); resultBox.innerHTML = '<p>❌ Error fetching product.</p>'; }
+}
+
+function normalizeOpenFoodProduct(p) {
+    const nutr = p.nutriments || {};
+    const ingredients_text = (p.ingredients_text || p.ingredients_text_en || '').toLowerCase();
+    return {
+        code: p.code,
+        name: p.product_name || p.generic_name || 'Unknown',
+        brand: (p.brands || '').split(',')[0],
+        nutriments: {
+            calories: Number(nutr['energy-kcal_100g'] || nutr['energy_100g'] || 0),
+            sugar: Number(nutr['sugars_100g'] || 0),
+            fat: Number(nutr['fat_100g'] || 0),
+            satfat: Number(nutr['saturated-fat_100g'] || 0),
+            protein: Number(nutr['proteins_100g'] || 0),
+            salt: Number(nutr['salt_100g'] || 0)
+        },
+        ingredients_text
+    };
+}
+
+// ---------- Ingredient explainers ----------
+const INGREDIENT_EXPLAINERS = {
+    'high fructose corn syrup': 'A cheap sweetener linked to increased sugar intake — best avoided.',
+    'aspartame': 'Artificial sweetener — safe for many but avoid if you prefer clean-label.',
+    'hydrogenated': 'Contains trans fats (hydrogenated oils) — linked with heart disease.',
+    'sodium nitrate': 'A preservative found in processed meats — linked to certain health risks when consumed in excess.',
+    'msg': 'Flavor enhancer (monosodium glutamate) — some people are sensitive.',
+    'vanaspati': 'Hydrogenated vegetable oil used in some regions — contains trans fats.'
+};
+
+function explainIngredients(text) {
+    const found = [];
+    for (const key in INGREDIENT_EXPLAINERS) { if (text.includes(key)) { found.push({ k: key, info: INGREDIENT_EXPLAINERS[key] }); } }
+    return found;
+}
+
+// ---------- Advanced scoring ----------
+function analyzeProductAgainstProfile(product, profile) {
+    const nutr = product.nutriments;
+    let score = 100; const reasons = [];
+
+    // allergy immediate
+    for (const a of (profile.allergies || [])) {
+        if (product.ingredients_text.includes(a)) return { score: 0, label: '❌ Avoid — Allergen', color: 'bad', advice: `Contains ${a}. Avoid immediately.`, reasons: [`Contains allergen: ${a}`] };
+    }
+
+    // diet compatibility
+    if (profile.diet === 'vegetarian') {
+        const nonVegWords = ['chicken', 'beef', 'pork', 'fish', 'gelatin'];
+        for (const w of nonVegWords) if (product.ingredients_text.includes(w)) { score -= 50; reasons.push('Contains non-vegetarian ingredients'); }
+    }
+
+    // sugar
+    if (nutr.sugar > (profile.goal === 'diabetes' ? 5 : (profile.goal === 'weight_loss' ? 10 : 20))) { score -= 30; reasons.push(`High sugar: ${nutr.sugar} g/100g`); }
+    else reasons.push(`Sugar: ${nutr.sugar} g/100g`);
+
+    // saturated fat
+    if (nutr.satfat > 4) { score -= 15; reasons.push(`High saturated fat: ${nutr.satfat} g/100g`); }
+
+    // sodium (salt in g -> mg)
+    const sodium_mg = nutr.salt * 400;
+    if (sodium_mg > (profile.goal === 'diabetes' ? 800 : 1500)) { score -= 15; reasons.push(`High sodium (~${Math.round(sodium_mg)} mg/100g)`); }
+
+    // calories
+    if (profile.goal === 'weight_loss' && nutr.calories > 250) { score -= 20; reasons.push('High calories for weight loss'); }
+    if (profile.goal === 'muscle_gain' && nutr.protein > 10) { score += 10; reasons.push('Good protein for muscle gain'); }
+
+    // ingredient-based penalties
+    const expls = explainIngredients(product.ingredients_text);
+    expls.forEach(e => { score -= 12; reasons.push(`Contains ${e.k}`); });
+
+    score = Math.max(0, Math.min(100, score));
+    let label = ''; let color = '';
+    if (score >= 75) { label = '✅ Recommended'; color = 'good'; }
+    else if (score >= 45) { label = '⚠️ Use with caution'; color = 'warn'; }
+    else { label = '❌ Avoid'; color = 'bad'; }
+
+    let advice = '';
+    if (color === 'good') advice = 'This product fits your profile — occasional or regular use is acceptable.';
+    else if (color === 'warn') advice = 'Consider smaller portion sizes or look for lower-sugar/sodium alternatives.';
+    else advice = 'Not recommended — choose healthier alternatives.';
+
+    return { score, label, color, advice, reasons, ingredientInsights: expls };
+}
+
+function clearResult() { nutriList.style.display = 'none'; reasonList.innerHTML = ''; ingredientExplainer.innerHTML = '—'; adviceBox.innerHTML = '—'; statusBadge.innerHTML = ''; }
+
+// ---------- Show final product ----------
+function showProduct(product) {
+    const profile = JSON.parse(localStorage.getItem('nutriUser') || 'null');
+    if (!profile) { resultBox.innerHTML = '<p>Please fill and save your profile first.</p>'; return; }
+
+    document.getElementById('calVal').innerText = product.nutriments.calories;
+    document.getElementById('sugVal').innerText = product.nutriments.sugar;
+    document.getElementById('fatVal').innerText = product.nutriments.fat;
+    document.getElementById('protVal').innerText = product.nutriments.protein;
+    nutriList.style.display = 'flex';
+
+    resultBox.innerHTML = `<strong>${product.name}</strong><br><small>${product.brand || ''} • code ${product.code}</small>`;
+
+    const analysis = analyzeProductAgainstProfile(product, profile);
+
+    // badge
+    statusBadge.innerHTML = `<span class='badge ${analysis.color}'>${analysis.label}</span>`;
+
+    // reasons
+    reasonList.innerHTML = '<ul>' + analysis.reasons.map(r => `<li>${r}</li>`).join('') + '</ul>';
+
+    // ingredient explainers
+    if (analysis.ingredientInsights.length) { ingredientExplainer.innerHTML = analysis.ingredientInsights.map(i => `<b>${i.k}</b>: ${i.info}`).join('<hr>'); } else ingredientExplainer.innerHTML = 'No flagged additives detected.';
+
+    adviceBox.innerHTML = `<strong>${analysis.advice}</strong>`;
+}
+
+// ---------- History ----------
+function addHistory(code) { const h = JSON.parse(localStorage.getItem('nutriHistory') || '[]'); h.unshift({ code, ts: Date.now() }); localStorage.setItem('nutriHistory', JSON.stringify(h.slice(0, 20))); renderHistory(); }
+function renderHistory() { const h = JSON.parse(localStorage.getItem('nutriHistory') || '[]'); if (!h.length) { historyEl.innerHTML = 'No scans yet.'; return; } historyEl.innerHTML = h.map(item => `<div style='padding:6px 0;border-bottom:1px dashed #eee'><small>${new Date(item.ts).toLocaleString()}</small><br><b>${item.code}</b></div>`).join(''); }
+renderHistory();

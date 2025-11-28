@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>NutriScan — Advanced Nutrition Scanner</title>
+
+  <!-- ZXing for camera scanning + Quagga for image uploads -->
+  <script src="https://cdn.jsdelivr.net/npm/@zxing/library@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/quagga/dist/quagga.min.js"></script>
+
+  <!-- Firebase (v9) - replace config below with your project values -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+
+  <link rel="stylesheet" href="barcode-scanner.css">
+</head>
+
+<body>
+  <div class="wrap">
+    <header>
+      <h1>NutriScan — Advanced Nutrition Assistant</h1>
+      <div>
+        <button id="btnSignUp" class="ghost">Sign up</button>
+        <button id="btnSignIn" class="ghost">Sign in</button>
+        <button id="btnSignOut" style="display:none">Sign out</button>
+      </div>
+    </header>
+
+    <div class="grid">
+      <!-- LEFT: Profile & Scanner controls -->
+      <div>
+        <div class="card profile">
+          <h3>Profile</h3>
+          <form id="userProfileForm">
+            <label>Name</label>
+            <input id="name" type="text" placeholder="Your name">
+            <div class="row">
+              <div style="flex:1">
+                <label>Age</label>
+                <input id="age" type="number" min="1">
+              </div>
+              <div style="flex:1">
+                <label>Gender</label>
+                <select id="gender">
+                  <option value="">Prefer not</option>
+                  <option>male</option>
+                  <option>female</option>
+                  <option>other</option>
+                </select>
+              </div>
+            </div>
+            <div class="row">
+              <div style="flex:1">
+                <label>Height (cm)</label>
+                <input id="height" type="number">
+              </div>
+              <div style="flex:1">
+                <label>Weight (kg)</label>
+                <input id="weight" type="number">
+              </div>
+            </div>
+
+            <label>Activity</label>
+            <select id="activity">
+              <option value="sedentary">Sedentary</option>
+              <option value="light">Light</option>
+              <option value="moderate">Moderate</option>
+              <option value="active">Active</option>
+            </select>
+
+            <label>Diet type</label>
+            <select id="diet">
+              <option value="omnivore">Non-vegetarian</option>
+              <option value="vegetarian">Vegetarian</option>
+              <option value="vegan">Vegan</option>
+            </select>
+
+            <label>Health goal</label>
+            <select id="goal">
+              <option value="maintenance">Maintenance</option>
+              <option value="weight_loss">Weight Loss</option>
+              <option value="muscle_gain">Muscle Gain</option>
+              <option value="diabetes">Diabetes</option>
+            </select>
+
+            <label>Allergies (comma separated)</label>
+            <input id="allergies" type="text" placeholder="peanut, gluten, dairy">
+
+            <div style="display:flex;gap:10px;margin-top:12px">
+              <button type="submit">Save locally</button>
+              <button id="btnSaveCloud" type="button" class="ghost">Save to cloud</button>
+            </div>
+            <p id="saveMsg" style="color:var(--good);display:none;margin-top:10px">✔ Saved</p>
+          </form>
+        </div>
+
+        <div style="height:18px"></div>
+
+        <div class="card">
+          <h3>Scanner</h3>
+          <video id="video" autoplay muted playsinline></video>
+          <div class="controls">
+            <button id="startCamBtn">Start Camera</button>
+            <button id="stopCamBtn" class="ghost">Stop</button>
+          </div>
+
+          <hr style="margin:12px 0">
+
+          <label>Upload image</label>
+          <input id="imageUpload" type="file" accept="image/*">
+          <img id="previewImage" style="display:none">
+          <div class="controls" style="margin-top:8px">
+            <button id="uploadScanBtn">Scan Image</button>
+            <button id="tryRotateBtn" class="ghost">Try rotated</button>
+          </div>
+          <small>Tip: Upload a clear, well-lit barcode. If scan fails try rotating the image or use camera.</small>
+        </div>
+      </div>
+
+      <!-- RIGHT: Results -->
+      <div>
+        <div class="card">
+          <div class="resultHeader">
+            <h3>Result</h3>
+            <div id="statusBadge"></div>
+          </div>
+
+          <div id="productInfo" style="margin-top:8px">No product scanned yet.</div>
+
+          <div class="nutri-list" id="nutriList" style="display:none">
+            <div class="nutri-item">
+              <div id="calVal">-</div><small>kcal/100g</small>
+            </div>
+            <div class="nutri-item">
+              <div id="sugVal">-</div><small>sugar g/100g</small>
+            </div>
+            <div class="nutri-item">
+              <div id="fatVal">-</div><small>fat g/100g</small>
+            </div>
+            <div class="nutri-item">
+              <div id="protVal">-</div><small>protein g/100g</small>
+            </div>
+          </div>
+
+          <div id="reasonList" style="margin-top:12px"></div>
+
+          <div style="margin-top:14px">
+            <h4>Ingredient insights</h4>
+            <div id="ingredientExplainer">—</div>
+          </div>
+
+          <div style="margin-top:14px">
+            <h4>Recommendations</h4>
+            <div id="advice">—</div>
+          </div>
+        </div>
+
+        <div style="height:12px"></div>
+        <div class="card">
+          <h4>History (local)</h4>
+          <div id="history">No scans yet.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+<script src="barcode-scanner.js"></script>
+
+</body>
+
+</html>
