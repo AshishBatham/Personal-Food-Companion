@@ -1,9 +1,12 @@
 // ---------- FIREBASE CONFIG - REPLACE WITH YOUR KEYS -----------
 const firebaseConfig = {
-    apiKey: "REPLACE_API_KEY",
-    authDomain: "REPLACE_AUTH_DOMAIN",
-    projectId: "REPLACE_PROJECT_ID",
-    // ...other keys
+    apiKey: "AIzaSyBz0OAElYhb90qc2QJLuTsRPVtbK68IujM",
+    authDomain: "nutriscan-cc2af.firebaseapp.com",
+    projectId: "nutriscan-cc2af",
+    storageBucket: "nutriscan-cc2af.firebasestorage.app",
+    messagingSenderId: "575933823311",
+    appId: "1:575933823311:web:4004a57591a6723bd96d3a",
+    measurementId: "G-RD062PLLTQ"
 };
 // Initialize firebase (compat)
 if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
